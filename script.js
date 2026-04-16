@@ -1,5 +1,6 @@
 (() => {
   const STORAGE_KEY = "blanes-suite.boards";
+  const THEME_STORAGE_KEY = "blanes-mail-theme";
   const STORAGE_VERSION = 3;
   const MS_PER_DAY = 24 * 60 * 60 * 1000;
   const KANBAN_LIST_TITLE_MAX_LENGTH = 52;
@@ -250,6 +251,7 @@
     route: { name: "boards", boardId: "" },
     searchQuery: "",
     isSearchOpen: false,
+    isProfileMenuOpen: false,
     isCreateBoardOpen: false,
     isCreateListOpen: false,
     isGanttModalOpen: false,
@@ -294,6 +296,7 @@
       visibleMonth: new Date().getMonth(),
       visibleYear: new Date().getFullYear(),
     },
+    theme: "dark",
   };
 
   const app = document.getElementById("app");
@@ -305,6 +308,48 @@
       .replace(/>/g, "&gt;")
       .replace(/\"/g, "&quot;")
       .replace(/'/g, "&#039;");
+  }
+
+  function resolveInitialTheme() {
+    const savedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
+    if (savedTheme === "light" || savedTheme === "dark") {
+      return savedTheme;
+    }
+    return "dark";
+  }
+
+  function getThemeToggleElements() {
+    return {
+      button: document.getElementById("theme-toggle-btn"),
+      icon: document.getElementById("theme-toggle-icon"),
+      label: document.getElementById("theme-toggle-label"),
+      chip: document.getElementById("theme-toggle-chip"),
+    };
+  }
+
+  function applyTheme(theme) {
+    const nextTheme = theme === "light" ? "light" : "dark";
+    const isDark = nextTheme === "dark";
+
+    ui.theme = nextTheme;
+    document.body.classList.toggle("theme-dark", isDark);
+    document.documentElement.style.colorScheme = isDark ? "dark" : "light";
+
+    const elements = getThemeToggleElements();
+    if (!elements.button || !elements.icon || !elements.label || !elements.chip) {
+      return;
+    }
+
+    elements.button.setAttribute("aria-pressed", String(isDark));
+    elements.label.textContent = isDark ? "Modo escuro" : "Modo claro";
+    elements.chip.textContent = isDark ? "Escuro" : "Claro";
+    elements.icon.className = isDark ? "bx bx-moon" : "bx bx-sun";
+  }
+
+  function toggleTheme() {
+    const nextTheme = ui.theme === "dark" ? "light" : "dark";
+    window.localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+    applyTheme(nextTheme);
   }
 
   function parseRoute() {
@@ -1591,11 +1636,43 @@
             </div>
 
             <div class="header__profile" aria-label="Perfil do usuario">
-              <button type="button" class="header__profile-trigger" aria-haspopup="menu">
+              <button
+                type="button"
+                class="header__profile-trigger${ui.isProfileMenuOpen ? " is-open" : ""}"
+                aria-haspopup="menu"
+                aria-expanded="${ui.isProfileMenuOpen}"
+                aria-controls="header-profile-menu"
+                data-action="toggle-profile-menu"
+              >
                 <span class="header__user-name">Chewie</span>
                 <span class="header__avatar" aria-hidden="true">C</span>
                 <i class="bx bx-chevron-down header__profile-arrow" aria-hidden="true"></i>
               </button>
+              ${ui.isProfileMenuOpen
+                ? `<div class="header__profile-menu" id="header-profile-menu" role="menu">
+                    <button type="button" class="header__profile-menu-item" role="menuitem" data-action="open-profile-page">
+                      <i class="bx bx-user" aria-hidden="true"></i>
+                      <span>Perfil</span>
+                    </button>
+                    <button type="button" class="header__profile-menu-item" role="menuitem" data-action="open-settings-page">
+                      <i class="bx bx-cog" aria-hidden="true"></i>
+                      <span>Configuracoes</span>
+                    </button>
+                    <div class="header__profile-menu-separator" aria-hidden="true"></div>
+                    <button
+                      type="button"
+                      class="header__user-item"
+                      id="theme-toggle-btn"
+                      role="menuitem"
+                      aria-pressed="true"
+                      data-action="toggle-theme"
+                    >
+                      <i class="bx bx-moon" id="theme-toggle-icon" aria-hidden="true"></i>
+                      <span id="theme-toggle-label">Modo escuro</span>
+                      <span class="header__user-chip" id="theme-toggle-chip">Ativo</span>
+                    </button>
+                  </div>`
+                : ""}
             </div>
           </div>
         </header>
@@ -1641,6 +1718,8 @@
     `;
 
     app.innerHTML = html;
+
+    applyTheme(ui.theme);
 
     if (ui.datePicker.openFor) {
       updateDatePickerPanelPlacement();
@@ -1730,6 +1809,11 @@
       shouldRender = true;
     }
 
+    if (ui.isProfileMenuOpen && !target.closest(".header__profile")) {
+      ui.isProfileMenuOpen = false;
+      shouldRender = true;
+    }
+
     if (ui.isSearchOpen) {
       const inSearch = target.closest(".header__search");
       if (!inSearch) {
@@ -1772,6 +1856,18 @@
     }
 
     switch (action) {
+      case "toggle-profile-menu":
+        ui.isProfileMenuOpen = !ui.isProfileMenuOpen;
+        break;
+      case "open-profile-page":
+        ui.isProfileMenuOpen = false;
+        break;
+      case "open-settings-page":
+        ui.isProfileMenuOpen = false;
+        break;
+      case "toggle-theme":
+        toggleTheme();
+        break;
       case "toggle-date-picker": {
         const fieldName = actionNode.getAttribute("data-date-field");
         if (!fieldName || (fieldName !== "startDate" && fieldName !== "endDate")) {
@@ -2134,6 +2230,12 @@
 
       if (ui.isCreateBoardOpen || ui.isCreateListOpen || ui.isGanttModalOpen || ui.isSchedulerModalOpen || ui.isPayloadModalOpen || ui.activeCardId) {
         closeAllModals();
+        render();
+        return;
+      }
+
+      if (ui.isProfileMenuOpen) {
+        ui.isProfileMenuOpen = false;
         render();
         return;
       }
@@ -2539,6 +2641,7 @@
 
     window.addEventListener("hashchange", () => {
       ui.isSearchOpen = false;
+      ui.isProfileMenuOpen = false;
       ui.searchQuery = "";
       ui.boardTitleEditing = false;
       ui.editingListId = null;
@@ -2562,6 +2665,8 @@
   }
 
   bindGlobalEvents();
+
+  applyTheme(resolveInitialTheme());
 
   if (!window.location.hash) {
     setRoute({ name: "boards", boardId: "" });

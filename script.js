@@ -249,6 +249,8 @@
 
   const ui = {
     route: { name: "boards", boardId: "" },
+    isMobileNavOpen: false,
+    activeBoardListIndex: 0,
     searchQuery: "",
     isSearchOpen: false,
     isProfileMenuOpen: false,
@@ -959,12 +961,14 @@
   }
 
   function buildBoardsPage() {
-    const boards = state.boards;
-    const boardCountText = `${boards.length} ${boards.length === 1 ? "quadro" : "quadros"}`;
+    const normalizedQuery = ui.searchQuery.trim().toLowerCase();
+    const boards = normalizedQuery
+      ? state.boards.filter((board) => board.title.toLowerCase().includes(normalizedQuery))
+      : state.boards;
 
     const cardsHtml = boards
       .map((board) => {
-        const style = `background: linear-gradient(148deg, rgba(255, 255, 255, 0.86), ${board.color}99); border-color: ${board.color}66;`;
+        const style = `--board-color: ${board.color}; background: linear-gradient(148deg, rgba(255, 255, 255, 0.86), ${board.color}99); border-color: ${board.color}66;`;
         return `
           <a href="#/boards/${encodeURIComponent(board.id)}" class="board-card" style="${style}" data-board-id="${escapeHtml(board.id)}">
             <div class="board-card-header">
@@ -979,15 +983,13 @@
     return `
       <section class="boards-page">
         <header class="boards-header">
-          <div>
+          <div class="boards-header__main">
             <p class="workspace-kicker">Area de trabalho</p>
             <h1>${escapeHtml(state.workspace.name)}</h1>
-            <p>Suite de produtividade preparada para Kanban, Scrum e integracoes futuras.</p>
           </div>
 
-          <div class="boards-stats">
-            <span>Resumo</span>
-            <strong>${escapeHtml(boardCountText)}</strong>
+          <div class="boards-header__actions">
+            <button type="button" class="btn btn-primary boards-header__add-btn" data-action="open-create-board" aria-label="Criar novo quadro">+</button>
           </div>
         </header>
 
@@ -998,6 +1000,8 @@
             <p class="create-board-card-subtitle">Defina contexto, prioridade e fluxo de trabalho em segundos.</p>
           </button>
         </div>
+
+        ${boards.length === 0 ? '<p class="boards-empty">Nenhum quadro encontrado para este filtro.</p>' : ""}
       </section>
     `;
   }
@@ -1179,14 +1183,21 @@
 
     const content = lists.length
       ? `
-          <div
-            class="kanban-board${ui.isBoardPanning ? " is-drag-scrolling" : ""}"
-            role="list"
-            aria-label="Listas do quadro"
-            data-role="kanban-board"
-          >
-            ${listColumns}
-            <button type="button" class="kanban-add-list-tile" data-action="open-create-list">+ Adicionar outra lista</button>
+          <div class="kanban-board-shell">
+            <div
+              class="kanban-board${ui.isBoardPanning ? " is-drag-scrolling" : ""}"
+              role="list"
+              aria-label="Listas do quadro"
+              data-role="kanban-board"
+            >
+              ${listColumns}
+              <button type="button" class="kanban-add-list-tile" data-action="open-create-list">+ Adicionar outra lista</button>
+            </div>
+            <div class="kanban-board-dots" aria-hidden="true">
+              ${lists
+                .map((_, index) => `<span class="kanban-board-dot${index === ui.activeBoardListIndex ? " is-active" : ""}"></span>`)
+                .join("")}
+            </div>
           </div>
         `
       : `
@@ -1204,17 +1215,16 @@
         <section class="board-page board-page--tinted" style="--board-tone: ${escapeHtml(board.color || "#1d4ed8")}">
           <header class="board-context-header" aria-label="Cabecalho do quadro">
             <div class="board-context-header__left">
-              <p class="workspace-kicker">Quadro Kanban</p>
               ${isBoardTitleEditing
                 ? `<input class="board-title-input" value="${escapeHtml(ui.draftBoardTitle)}" data-action="board-title-input" aria-label="Nome do quadro" />`
                 : `<button type="button" class="board-title-button" data-action="edit-board-title">${escapeHtml(board.title)}</button>`}
             </div>
 
             <div class="board-context-header__actions">
-              <button type="button" class="btn btn-primary" data-action="open-create-list">Adicionar outra lista</button>
+              <button type="button" class="btn btn-primary board-context-header__add-list-btn" data-action="open-create-list" aria-label="Adicionar outra lista">+</button>
               <button type="button" class="btn btn-secondary" data-action="open-gantt">Grafico de Gantt</button>
               <button type="button" class="btn btn-secondary" data-action="open-scheduler">Scheduler</button>
-              <button type="button" class="btn btn-secondary" data-action="open-payload">Payload tecnico</button>
+              ${isMobileViewport() ? "" : '<button type="button" class="btn btn-secondary" data-action="open-payload">Payload tecnico</button>'}
             </div>
           </header>
 
@@ -1238,7 +1248,19 @@
     };
   }
 
+  function isMobileViewport() {
+    return window.matchMedia("(max-width: 920px)").matches;
+  }
+
+  function shouldShowSearchSuggestions() {
+    return ui.route.name !== "board" && !isMobileViewport();
+  }
+
   function buildSearchResults() {
+    if (!shouldShowSearchSuggestions()) {
+      return "";
+    }
+
     const normalizedQuery = ui.searchQuery.trim().toLowerCase();
     const recentBoards = state.boards.slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
@@ -1582,6 +1604,12 @@
   function render() {
     ui.route = parseRoute();
 
+    const activeElement = document.activeElement;
+    const shouldRestoreSearchFocus =
+      activeElement && activeElement.classList && activeElement.classList.contains("header__input");
+    const searchCaretStart = shouldRestoreSearchFocus && typeof activeElement.selectionStart === "number" ? activeElement.selectionStart : null;
+    const searchCaretEnd = shouldRestoreSearchFocus && typeof activeElement.selectionEnd === "number" ? activeElement.selectionEnd : null;
+
     const isBoardRoute = ui.route.name === "board";
     const board = isBoardRoute ? getBoardById(ui.route.boardId) : null;
     let boardData = null;
@@ -1605,12 +1633,22 @@
     }
 
     const appShellClass = `app-shell${isBoardRoute ? " app-shell--board-focus" : ""}`;
+    const appShellStyle = isBoardRoute && board ? ` style="--board-tone: ${escapeHtml(board.color || "#1d4ed8")}"` : "";
 
     const html = `
-      <div class="${appShellClass}">
+      <div class="${appShellClass}"${appShellStyle}>
         <header class="header">
           <div class="header__container">
             <div class="header__brand">
+              <button
+                type="button"
+                class="header__menu-toggle"
+                data-action="toggle-mobile-nav"
+                aria-label="Abrir menu"
+                aria-expanded="${ui.isMobileNavOpen}"
+              >
+                <i class="bx bx-menu" aria-hidden="true"></i>
+              </button>
               ${isBoardRoute
                 ? `<div class="header__board-nav" aria-label="Atalhos de navegacao">
                     <a href="#/" class="header__board-link" aria-label="Ir para quadros">
@@ -1618,22 +1656,28 @@
                     </a>
                   </div>`
                 : ""}
-              <span class="header__logo">Blanes Project</span>
+              ${isBoardRoute
+                ? ""
+                : `<a href="#/" class="header__logo-link" aria-label="Pagina inicial">
+                     <img src="public/assets/img/layers.png" alt="Blanes logo" class="header__logo-image" />
+                   </a>`}
             </div>
 
-            <div class="header__search" role="search">
-              <input
-                type="search"
-                placeholder="Buscar quadros"
-                class="header__input"
-                value="${escapeHtml(ui.searchQuery)}"
-                aria-expanded="${ui.isSearchOpen}"
-                aria-controls="header-search-results"
-                data-action="search-query"
-              />
-              <i class="bx bx-search header__icon" aria-hidden="true"></i>
-              ${buildSearchResults()}
-            </div>
+            ${isBoardRoute
+              ? ""
+              : `<div class="header__search" role="search">
+                   <input
+                     type="search"
+                     placeholder="Buscar quadros"
+                     class="header__input"
+                     value="${escapeHtml(ui.searchQuery)}"
+                     aria-expanded="${shouldShowSearchSuggestions() ? ui.isSearchOpen : false}"
+                     ${shouldShowSearchSuggestions() ? 'aria-controls="header-search-results"' : ""}
+                     data-action="search-query"
+                   />
+                   <i class="bx bx-search header__icon" aria-hidden="true"></i>
+                   ${buildSearchResults()}
+                 </div>`}
 
             <div class="header__profile" aria-label="Perfil do usuario">
               <button
@@ -1679,7 +1723,7 @@
 
         ${isBoardRoute
           ? ""
-          : `<aside class="nav" aria-label="Navegacao principal">
+          : `<aside class="nav${ui.isMobileNavOpen ? " is-open" : ""}" aria-label="Navegacao principal">
               <nav class="nav__container">
                 <div>
                   <a href="#/" class="nav__link nav__logo" aria-label="Pagina inicial">
@@ -1704,7 +1748,8 @@
                   <p class="nav__version">Versao: v0.1.0</p>
                 </div>
               </nav>
-            </aside>`}
+            </aside>
+            <button type="button" class="nav-overlay${ui.isMobileNavOpen ? " is-open" : ""}" data-action="close-mobile-nav" aria-label="Fechar menu"></button>`}
 
         <main class="app-content" aria-live="polite">${pageContent}</main>
       </div>
@@ -1748,8 +1793,61 @@
       }
     }
 
+    if (shouldRestoreSearchFocus && !isBoardRoute) {
+      const searchInput = app.querySelector(".header__input");
+      if (searchInput) {
+        searchInput.focus({ preventScroll: true });
+        if (searchCaretStart !== null && searchCaretEnd !== null) {
+          const max = searchInput.value.length;
+          const start = Math.min(searchCaretStart, max);
+          const end = Math.min(searchCaretEnd, max);
+          searchInput.setSelectionRange(start, end);
+        }
+      }
+    }
+
     if (ui.isGanttModalOpen && boardData) {
       mountGantt(boardData.data.timelineCards);
+    }
+
+    if (isBoardRoute) {
+      updateKanbanDotsFromScroll();
+    }
+  }
+
+  function updateKanbanDotsFromScroll() {
+    const board = app.querySelector("[data-role='kanban-board']");
+    if (!board) {
+      return;
+    }
+
+    const listNodes = Array.from(board.querySelectorAll(".kanban-list[data-list-id]"));
+    if (!listNodes.length) {
+      ui.activeBoardListIndex = 0;
+      return;
+    }
+
+    const boardRect = board.getBoundingClientRect();
+    const centerX = boardRect.left + boardRect.width / 2;
+    let nearestIndex = 0;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+
+    listNodes.forEach((node, index) => {
+      const rect = node.getBoundingClientRect();
+      const nodeCenter = rect.left + rect.width / 2;
+      const distance = Math.abs(nodeCenter - centerX);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestIndex = index;
+      }
+    });
+
+    if (ui.activeBoardListIndex !== nearestIndex) {
+      ui.activeBoardListIndex = nearestIndex;
+      const dots = app.querySelectorAll(".kanban-board-dot");
+      dots.forEach((dot, index) => {
+        dot.classList.toggle("is-active", index === nearestIndex);
+      });
     }
   }
 
@@ -1809,6 +1907,11 @@
       shouldRender = true;
     }
 
+    if (ui.isMobileNavOpen && !target.closest(".nav") && !target.closest(".header__menu-toggle")) {
+      ui.isMobileNavOpen = false;
+      shouldRender = true;
+    }
+
     if (ui.isProfileMenuOpen && !target.closest(".header__profile")) {
       ui.isProfileMenuOpen = false;
       shouldRender = true;
@@ -1856,6 +1959,12 @@
     }
 
     switch (action) {
+      case "toggle-mobile-nav":
+        ui.isMobileNavOpen = !ui.isMobileNavOpen;
+        break;
+      case "close-mobile-nav":
+        ui.isMobileNavOpen = false;
+        break;
       case "toggle-profile-menu":
         ui.isProfileMenuOpen = !ui.isProfileMenuOpen;
         break;
@@ -2105,7 +2214,7 @@
     switch (action) {
       case "search-query":
         ui.searchQuery = target.value;
-        ui.isSearchOpen = true;
+        ui.isSearchOpen = shouldShowSearchSuggestions();
         shouldRender = true;
         break;
       case "draft-create-board-title":
@@ -2153,8 +2262,10 @@
   function handleFocusIn(event) {
     const target = event.target;
     if (target.classList.contains("header__input")) {
-      ui.isSearchOpen = true;
-      render();
+      if (shouldShowSearchSuggestions()) {
+        ui.isSearchOpen = true;
+        render();
+      }
     }
   }
 
@@ -2236,6 +2347,12 @@
 
       if (ui.isProfileMenuOpen) {
         ui.isProfileMenuOpen = false;
+        render();
+        return;
+      }
+
+      if (ui.isMobileNavOpen) {
+        ui.isMobileNavOpen = false;
         render();
         return;
       }
@@ -2640,6 +2757,7 @@
     });
 
     window.addEventListener("hashchange", () => {
+      ui.isMobileNavOpen = false;
       ui.isSearchOpen = false;
       ui.isProfileMenuOpen = false;
       ui.searchQuery = "";
@@ -2661,7 +2779,16 @@
       if (ui.datePicker.openFor) {
         updateDatePickerPanelPlacement();
       }
+
+      updateKanbanDotsFromScroll();
     });
+
+    document.addEventListener("scroll", (event) => {
+      const target = event.target;
+      if (target && target.matches && target.matches("[data-role='kanban-board']")) {
+        updateKanbanDotsFromScroll();
+      }
+    }, true);
   }
 
   bindGlobalEvents();
